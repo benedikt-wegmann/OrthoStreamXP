@@ -20,8 +20,9 @@ internal sealed class PresetOption(QualityPreset preset, Action<QualityPreset> c
     /// <summary>Why it is recommended, under its badge.</summary>
     public string? RecommendedReason => IsRecommended ? PresetMemory.Recommended.Reason : null;
 
-    public string Details =>
-        $"Zoom {Preset.Zl16Zoom} in most areas, {Preset.Zl18Zoom} near airports · about {Preset.MetresPerPixel:0.#} m per pixel · a new area loads in {Preset.FirstVisit}";
+    public string Details => Preset == QualityPreset.Dynamic
+        ? $"Below 5,000 ft as Extra: zoom {Preset.Zl16Zoom} in most areas, {Preset.Zl18Zoom} near airports · higher up as Sharp, then Balanced · sharp again before a descent reaches the ground · a new area loads in {Preset.FirstVisit}"
+        : $"Zoom {Preset.Zl16Zoom} in most areas, {Preset.Zl18Zoom} near airports · about {Preset.MetresPerPixel:0.#} m per pixel · a new area loads in {Preset.FirstVisit}";
 
     public string BestFor => $"Best for: {Preset.BestFor}";
 

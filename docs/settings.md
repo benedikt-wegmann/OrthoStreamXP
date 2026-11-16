@@ -23,8 +23,23 @@ Choose how sharp the ground is. Each preset comes with settings tested for it an
 | **Sharp** | 2048 px | 16, 17 near airports | ~3.4 m per pixel | Everyday flying, approaches included |
 | **Ultra** | 4096 px | 17, 18 near airports | ~1.7 m per pixel | Low flight and GA, with plenty of graphics memory |
 | **Extra** | 4096 px | 17, 19 near airports | ~1.7 m per pixel | Low and slow flight and screenshots, on a fast connection |
+| **Dynamic** | Extra's near the ground, less higher up | as Extra below 5,000 ft | follows the height | Climbs, cruise and approaches in one flight, on a fast connection |
 
 **Extra** is Ultra with the finest imagery (zoom 19) near airports, which often avoids clouds and other artefacts. Elsewhere it is the same as Ultra. Near airports it downloads four times as much as Ultra, and a new area takes a little longer to load: about 4 minutes, then sharp next to the aircraft.
+
+### Dynamic
+
+**Dynamic** makes the detail follow your height above the ground:
+
+- **Below 5,000 ft** it is Extra.
+- **From 5,000 ft** the photos are downloaded at Sharp's detail.
+- **From 25,000 ft** they are downloaded at Balanced's detail.
+
+High up, X-Plane still asks for the photos in full detail, though from there the detail cannot be seen. Dynamic downloads about half as much in a climb and cruise, which suits airliners and other high flying.
+
+On a descent, Dynamic looks four minutes ahead and goes back to full detail early, so the ground is sharp again before you come close to it. X-Plane does not load a photo again just because you came lower: one it loaded with less detail high up stays that way while X-Plane keeps it. That is why the switch back comes early.
+
+Dynamic shares Extra's textures in the cache, so you can switch between the two without downloading anything again, and photos already in the cache are shown as they are at any height. It needs X-Plane to send the aircraft's position, which it does on the same PC by itself. The heights can be changed in the settings file (**Show the file**): `dynamic-sharp-above` and `dynamic-balanced-above`, in feet.
 
 Each card shows the imagery zoom, the metres per pixel, roughly how long a new area takes to load, and how much graphics memory the photo textures take. Until you have flown, that memory figure comes from a test flight; after your first long flight, it is measured on your PC.
 
@@ -57,6 +72,7 @@ Your scenery packages are not changed: OrthoStreamXP adjusts the terrain files a
 
 - **Where the pictures come from:** the imagery source.
   - *Bing, then Esri where Bing has no picture* (recommended): the sharpest pictures in most places.
+  - *Esri (ArcGIS), then Bing where Esri has no picture*: in some regions Esri's photos are newer or clearer than Bing's.
   - *Bing only*.
   - *Geoportal in Poland (national orthophoto), Bing and Esri elsewhere*.
 - **Downloads at once:** how many pictures download in parallel, from 16 to 256. Your internet connection sets the real speed; beyond about 160, more downloads only wait longer. Lower this if other programs need the connection while you fly.

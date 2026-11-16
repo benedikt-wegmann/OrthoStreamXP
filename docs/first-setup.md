@@ -78,7 +78,7 @@ This is where OrthoStreamXP keeps the pictures it downloads and the textures it 
 
 ![Setup step 5: Quality](images/setup-quality.png)
 
-Pick how sharp the ground should be: **Balanced**, **Sharp**, **Ultra** or **Extra**. Each card shows the texture size, the imagery zoom level, the metres per pixel, and roughly how long a new area takes to load. See [Settings › Quality](settings.md#quality) for a comparison.
+Pick how sharp the ground should be: **Balanced**, **Sharp**, **Ultra**, **Extra** or **Dynamic** (Extra near the ground, less detail high up, where it cannot be seen). Each card shows the texture size, the imagery zoom level, the metres per pixel, and roughly how long a new area takes to load. See [Settings › Quality](settings.md#quality) for a comparison.
 
 **Not sure?** Click **Test my connection** (it says **Test again** if you have tested before). OrthoStreamXP downloads real pictures for about 30 seconds, then:
 

@@ -60,7 +60,7 @@ internal sealed class SetupViewModel : ObservableObject
         XPlaneOptions = [.. SystemCheck.FindXPlaneFolders().Select(f => new FolderOption(f, "X-Plane found here", ChooseXPlane))];
         // Which packages to use is the person's own choice: nothing is searched for, only the folder chosen before is offered.
         PackageOptions = [];
-        Presets = [.. QualityPreset.All.Select(p => new PresetOption(p, preset => Preset = preset))];
+        Presets = [.. QualityPreset.Choices.Select(p => new PresetOption(p, preset => Preset = preset))];
         // Re-running the setup starts from the current settings; a first setup suggests the cache beside the packages.
         _cacheChosen = existing.Get("cache") is not null;
         _cache = existing.Get("cache") ?? SystemCheck.SuggestedCacheFolder(null);
@@ -69,7 +69,8 @@ internal sealed class SetupViewModel : ObservableObject
         PresetMemory.Load(existing.Get("cache"));
         foreach (PresetOption option in Presets) option.RefreshMemory();
         QualityPreset recommended = PresetMemory.Recommended.Preset;
-        Preset = QualityPreset.ForLevel(existing.GetInt("level-change") ?? recommended.Level) ?? recommended;
+        Preset = QualityPreset.Current(existing.GetInt("level-change") ?? recommended.Level, existing.GetBool(QualityPreset.DynamicQualityKey) == true)
+                 ?? recommended;
         IsRerun = existing.Get("cache") is not null;
         ConnectionTest = new ConnectionTestViewModel(
             () => existing.Get("texture-provider") ?? "bing,esri",

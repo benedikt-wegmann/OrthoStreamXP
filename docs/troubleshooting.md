@@ -38,7 +38,7 @@ The About page shows your version, whether WinFsp is installed (with a **Get Win
 
 ## Updates
 
-OrthoStreamXP checks for updates when it opens and from time to time while it runs, and downloads a new version in the background. When the update is ready, Home shows **OrthoStreamXP x.y.z is ready to install**. If the scenery is streaming, finish your flight and stop it first; then click **Update and restart**. Your settings, cache and flight history stay.
+OrthoStreamXP checks for updates when it opens and from time to time while it runs, and downloads a new version in the background. To look straight away, click **Check for updates** at the top of the Home page; if there is nothing new, OrthoStreamXP tells you that you already have the newest version, or why it could not look. When the update is ready, Home shows **OrthoStreamXP x.y.z is ready to install** at the top of the page, above the status card. If the scenery is streaming, finish your flight and stop it first; then click **Update and restart**. Your settings, cache and flight history stay.
 
 ## Uninstalling
 

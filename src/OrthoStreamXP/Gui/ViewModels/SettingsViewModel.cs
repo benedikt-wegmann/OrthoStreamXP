@@ -24,7 +24,7 @@ internal sealed class SettingsViewModel : ObservableObject, IPage
     public SettingsViewModel(MainViewModel main)
     {
         _main = main;
-        Presets = [.. QualityPreset.All.Select(p => new PresetOption(p, ChoosePreset))];
+        Presets = [.. QualityPreset.Choices.Select(p => new PresetOption(p, ChoosePreset))];
         Providers =
         [
             new Choice("Bing, then Esri where Bing has no picture (recommended)", "bing,esri"),
@@ -131,7 +131,8 @@ internal sealed class SettingsViewModel : ObservableObject, IPage
     private int _tab;
 
     /// <summary>The preset the settings are at, or null for a level set by hand.</summary>
-    private QualityPreset? CurrentPreset => QualityPreset.ForLevel(_document.GetInt("level-change") ?? 0);
+    private QualityPreset? CurrentPreset =>
+        QualityPreset.Current(_document.GetInt("level-change") ?? 0, _document.GetBool(QualityPreset.DynamicQualityKey) == true);
 
     /// <summary>What the flight tuning changed from the preset's own values.</summary>
     public IReadOnlyList<TunedRow> TunedRows => CurrentPreset is { } preset
@@ -500,7 +501,8 @@ internal sealed class SettingsViewModel : ObservableObject, IPage
         CacheFolder = _document.Get("cache") ?? "";
         _loading = false;
         int level = _document.GetInt("level-change") ?? 0;
-        foreach (PresetOption option in Presets) option.Show(option.Preset.Level == level);
+        QualityPreset? current = CurrentPreset;
+        foreach (PresetOption option in Presets) option.Show(option.Preset == current);
         CustomLevelNote = QualityPreset.ForLevel(level) is null
             ? $"Your settings file uses level-change {level}, which is not one of these. Choosing one replaces it."
             : null;

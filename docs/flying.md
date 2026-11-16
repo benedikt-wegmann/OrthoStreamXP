@@ -15,6 +15,8 @@ The Home page has two ways to start:
 
 Turn on **Start when OrthoStreamXP opens** if you want the scenery to start every time you open the app.
 
+When **Start and fly** starts X-Plane, OrthoStreamXP waits until X-Plane's window is in front, then moves out of its way to the notification area next to the clock. Click its icon to open the window again, or right-click it for **Open OrthoStreamXP** and **Exit**. When X-Plane quits, the window comes back on the Home page, ready to stop the scenery and show your flight report. If you start X-Plane yourself, the window stays where it is.
+
 If X-Plane was already running when you started OrthoStreamXP, Home shows **Restart X-Plane**. Quit X-Plane and start it again to see the photos.
 
 ## The Home page
@@ -25,7 +27,8 @@ Before your first start, Home shows **How it works**: start OrthoStreamXP, start
 
 From top to bottom:
 
-- **Status card.** Shows whether OrthoStreamXP is stopped, starting, ready (*Photo scenery is ready*) or in use (*Flying with photo scenery*). The **Start** button becomes **Stop** while it runs. The dot at the bottom of the sidebar shows the same state on every page.
+- **Check for updates.** Looks for a new version straight away (see [Troubleshooting › Updates](troubleshooting.md#updates)).
+- **Status card.** Shows whether OrthoStreamXP is stopped, starting, ready (*Photo scenery is ready*) or in use (*Flying with photo scenery*). The **Start** button becomes **Stop** while it runs. The dot at the bottom of the sidebar shows the same state on every page. Above it, the theme button switches the window between the Windows theme, light and dark.
 - **Notices.** Tuning suggestions, updates and problems appear here, each with a button for the next step.
 - **Last flight.** A report on your most recent flight, shown while OrthoStreamXP is stopped (see below).
 - **Session figures** (*This session* while it runs, *Last session* after it stops): how many textures X-Plane got, how many of its reads got the real picture, how many textures are being built now, and the download speed or the number of picture tiles downloaded.

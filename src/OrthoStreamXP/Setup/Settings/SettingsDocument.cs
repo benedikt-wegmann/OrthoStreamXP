@@ -131,6 +131,8 @@ internal sealed class SettingsDocument
             .AppendLine("texture-provider   = bing,esri")
             .AppendLine(CultureInfo.InvariantCulture, $"# quality preset: {preset.Name}; the level also sets the texture size ({preset.Size} px)")
             .AppendLine(CultureInfo.InvariantCulture, $"level-change       = {preset.Level.ToString(CultureInfo.InvariantCulture)}")
+            .AppendLine("# Dynamic quality (the Dynamic preset): less detail high above the ground, where it cannot be seen (on or off)")
+            .AppendLine(CultureInfo.InvariantCulture, $"{QualityPreset.DynamicQualityKey}    = {preset.Get(QualityPreset.DynamicQualityKey) ?? "off"}")
             .AppendLine()
             .AppendLine("# --- Speed ------------------------------------------------------------------------")
             .AppendLine(CultureInfo.InvariantCulture, $"dds-build-workers  = {preset.Get("dds-build-workers")}")

@@ -35,10 +35,26 @@ internal sealed record QualityPreset(string Name, int Level, string Summary, str
         "Low and slow flight and screenshots, on a fast connection", "about 4 min, then sharp next to the aircraft",
         Values(buildWorkers: 8, fileSystemThreads: 96, provisionalLod: 3, provisionalWait: 3, radiusKm: 4, textures: 6, buildMemoryMb: 1024, lookahead: 90));
 
+    // Extra near the ground, Sharp from 5,000 ft and Balanced from 25,000 ft above it: Extra's level and cache, with the
+    // detail held back high up (dynamic-quality). Measured on a day flight: full-detail textures were 82 % of the
+    // downloads at every height, and Sharp's detail above 5,000 ft would have saved about half of the climb and cruise.
+    public static readonly QualityPreset Dynamic = new("Dynamic", Extra.Level,
+        "Extra near the ground, Sharp from 5,000 ft and Balanced from 25,000 ft above it: full detail where it can be seen, about half the downloads in a climb and cruise.",
+        "Climbs, cruise and approaches in one flight, on a fast connection", "about 4 min, then sharp next to the aircraft",
+        new Dictionary<string, string?>(Extra.Settings) { [DynamicQualityKey] = "on" });
+
+    /// <summary>The presets by their level change: Dynamic is Extra's level (its cache, tuning and texture size), so it is not among them.</summary>
     public static IReadOnlyList<QualityPreset> All { get; } = [Balanced, Sharp, Ultra, Extra];
 
-    /// <summary>The preset with this level change, if one has it.</summary>
+    /// <summary>The presets offered in the window: every level, and Dynamic.</summary>
+    public static IReadOnlyList<QualityPreset> Choices { get; } = [.. All, Dynamic];
+
+    /// <summary>The preset with this level change, if one has it (Extra for Dynamic's level).</summary>
     public static QualityPreset? ForLevel(int? level) => All.FirstOrDefault(p => p.Level == level);
+
+    /// <summary>The preset the settings are at: Dynamic when dynamic-quality is on at its level, otherwise the level's.</summary>
+    public static QualityPreset? Current(int? level, bool dynamicQuality) =>
+        dynamicQuality && level == Dynamic.Level ? Dynamic : ForLevel(level);
 
     public string? Get(string name) => Settings.TryGetValue(name, out string? value) ? value : null;
 
@@ -58,8 +74,13 @@ internal sealed record QualityPreset(string Name, int Level, string Summary, str
     public void ApplyTo(SettingsDocument settings)
     {
         settings.Set("level-change", Level);
+        // Dynamic quality is Dynamic's alone: any other preset turns it off (an older settings file has no line for it).
+        if (!Settings.ContainsKey(DynamicQualityKey)) settings.Set(DynamicQualityKey, "off");
         foreach (var (name, value) in Settings) settings.Set(name, value);
     }
+
+    /// <summary>The setting that makes Extra's level <see cref="Dynamic"/>.</summary>
+    public const string DynamicQualityKey = "dynamic-quality";
 
     private static Dictionary<string, string?> Values(int buildWorkers, int fileSystemThreads, int provisionalLod,
         double? provisionalWait, double radiusKm, int textures, int buildMemoryMb, double lookahead = MountSettings.DefaultLookaheadSeconds) => new()

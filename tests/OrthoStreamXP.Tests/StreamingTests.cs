@@ -29,7 +29,8 @@ public sealed class StreamingTests : IDisposable
 
     /// <param name="level">-3: ZL16 textures are 1024 px from zoom 14, their base level 2 (zoom 12). -2: 2048 px from zoom 15, base level 3.</param>
     private Setup Streaming(int level = -3, double maxWait = 0.2, Func<int, TimeSpan>? delay = null, Setup? sharing = null, int detailedBuilds = 16,
-        long buildTiles = TextureStreamer.DefaultBuildTiles, Func<Uri, Task?>? hold = null, Daylight? nightPause = null)
+        long buildTiles = TextureStreamer.DefaultBuildTiles, Func<Uri, Task?>? hold = null, Daylight? nightPause = null, ReadLog? readLog = null,
+        AltitudeDetail? altitude = null)
     {
         FakeTileServer server = sharing?.Server ?? new FakeTileServer(delay: delay, hold: hold);
         TileSource tiles = sharing?.Tiles ?? Track(new TileSource("test", FakeTileServer.Template, 32, handler: server) { Store = new TileStore(_tree.PathOf("base")) });
@@ -42,7 +43,8 @@ public sealed class StreamingTests : IDisposable
         long buildMemory = detailedBuilds * TextureStreamer.BuildWeight(plan.SizeFor(16));
         // k = 1830: the distances in these tests are laid out for it, whatever the default.
         var streamer = Track(new TextureStreamer(roots, builder, view, new PagingModel(1830),
-            new StreamingOptions(NearWaitSeconds: 20, MaxWaitSeconds: maxWait, BuildMemoryBytes: buildMemory, BuildTiles: buildTiles), nightPause));
+            new StreamingOptions(NearWaitSeconds: 20, MaxWaitSeconds: maxWait, BuildMemoryBytes: buildMemory, BuildTiles: buildTiles), nightPause,
+            readLog, "Test package", altitude));
         return new Setup(server, tiles, roots, builder, view, streamer);
     }
 
@@ -478,6 +480,111 @@ public sealed class StreamingTests : IDisposable
 
         await Until(() => s.Streamer.RealFrom(t) == t.BaseMip);
         Assert.Equal([12], Zooms(s.Server));
+    }
+
+    [Fact]
+    public async Task The_builds_log_records_each_streamed_build_with_what_it_downloaded()
+    {
+        string builds;
+        using (ReadLog log = ReadLog.Start(_tree.PathOf("logs")))
+        {
+            Setup s = Streaming(maxWait: 5, readLog: log);
+            StreamedTexture t = s.Streamer.Get(Texture())!;
+            s.View.Update(new CameraReport(t.Lat, t.Lon, 3000, 200, null, false, DateTime.UtcNow)); // 3 km above its centre
+            ReadLevel(s.Streamer, t, 0);
+            await Until(() => s.Streamer.RealFrom(t) == 0); // logged before it is real; disposing the log writes the line
+            builds = log.BuildsPath;
+        }
+        string[] lines = File.ReadAllLines(builds);
+        Assert.Equal("time_s,package,path,from_mip,size_px,zoom,reason,distance_m,size_m,tiles_downloaded,bytes_downloaded,tiles_reused,seconds,outcome", lines[0]);
+        string[] full = lines.Skip(1).Select(l => l.Split(',')).Single(f => f[3] == "0");
+        Assert.Equal(["Test package", "textures/" + Stem + ".dds", "0", "1024", "14", "read"], full[1..7]);
+        Assert.Equal("3000", full[7]); // the camera's distance, its height included
+        Assert.Equal("16", full[9]); // 1024 px: 4 x 4 tiles at zoom 14 (16 + level change -3 + 1)
+        Assert.True(long.Parse(full[10], System.Globalization.CultureInfo.InvariantCulture) > 0);
+        Assert.Equal("ok", full[13]);
+    }
+
+    // ---------------------------------------------------------------- Dynamic quality
+
+    /// <summary>A step half the test textures' size (512 of 1024 px): held to it, level 1 is the finest fetched.</summary>
+    private static AltitudeDetail HalfSizeHigh() => new([new DetailTier("Half", 1000, new TexturePlan(-3, 512))], "Full");
+
+    private static CameraReport Above(StreamedTexture t, double heightM) => new(t.Lat, t.Lon, heightM, null, null, false, DateTime.UtcNow);
+
+    [Fact]
+    public void High_up_with_Dynamic_quality_a_near_read_downloads_only_the_steps_level_and_is_not_counted_as_blurry()
+    {
+        AltitudeDetail altitude = HalfSizeHigh();
+        Setup s = Streaming(maxWait: 5, altitude: altitude);
+        StreamedTexture t = s.Streamer.Get(Texture())!;
+        altitude.Offer(Above(t, 2000)); // 6,600 ft: above the step
+        s.View.Update(Above(t, 2000));
+        Assert.Equal((1, HeldBack.Altitude), s.Streamer.Finest(t));
+
+        var (bytes, answer) = ReadLevel(s.Streamer, t, 0);
+
+        Assert.Equal(Served.StandIn, answer.Served); // level 1, stretched
+        AssertColor(TileColor, bytes, 1024);
+        Assert.Equal(1, s.Streamer.RealFrom(t));
+        Assert.DoesNotContain(14, Zooms(s.Server)); // level 0's zoom never asked for
+        Assert.Contains(13, Zooms(s.Server));
+        Assert.Null(s.Roots.CachedFile(Texture()));
+        // Blurry by choice: not a read the tuning, the flight report or the Home page counts against the photos.
+        Assert.Equal((0L, 0L, 1L, 0L), (s.Streamer.Reads, s.Streamer.StandInReads, s.Streamer.AltitudeReads, s.Streamer.NightReads));
+    }
+
+    [Fact]
+    public async Task Load_ahead_stops_at_the_steps_level_high_up_and_fetches_full_detail_once_the_step_is_left()
+    {
+        AltitudeDetail altitude = HalfSizeHigh();
+        Setup s = Streaming(altitude: altitude);
+        StreamedTexture t = s.Streamer.Get(Texture())!;
+        altitude.Offer(Above(t, 2000));
+
+        Assert.True(await s.Streamer.Warm(Texture(), 0, FetchPriority.Background)!);
+        Assert.Equal(1, s.Streamer.RealFrom(t));
+        Assert.DoesNotContain(14, Zooms(s.Server));
+        Assert.True(await s.Streamer.Warm(Texture(), 0, FetchPriority.Background)!); // has all it may fetch: nothing more
+        Assert.DoesNotContain(14, Zooms(s.Server));
+
+        altitude.Offer(Above(t, 100)); // 330 ft: below the step and its margin
+        Assert.Equal((0, HeldBack.No), s.Streamer.Finest(t));
+        Assert.True(await s.Streamer.Warm(Texture(), 0, FetchPriority.Background)!);
+        Assert.Equal(0, s.Streamer.RealFrom(t));
+        Assert.Contains(14, Zooms(s.Server));
+    }
+
+    [Fact]
+    public void A_held_back_level_read_around_an_interleaved_tail_read_is_counted_held_back_in_every_piece()
+    {
+        // A step a quarter of the size: level 2 (the base) is the finest fetched, so level 1 is held back.
+        var altitude = new AltitudeDetail([new DetailTier("Quarter", 1000, new TexturePlan(-3, 256))], "Full");
+        Setup s = Streaming(maxWait: 5, altitude: altitude);
+        StreamedTexture t = s.Streamer.Get(Texture())!;
+        altitude.Offer(Above(t, 2000));
+        s.View.Update(Above(t, 2000));
+        var cursor = new ReadCursor();
+        int half = t.Layout.LengthOf(1) / 2;
+
+        // As X-Plane did on the flight: half of level 1, the tail from level 3, then the rest of level 1.
+        Assert.Equal(Served.StandIn, s.Streamer.Read(t, cursor, t.Layout.Offset(1), new byte[half]).Served);
+        Assert.Equal(Served.Real, s.Streamer.Read(t, cursor, t.Layout.Offset(3), new byte[t.Layout.Length - t.Layout.Offset(3)]).Served);
+        Assert.Equal(Served.StandIn, s.Streamer.Read(t, cursor, t.Layout.Offset(1) + half, new byte[t.Layout.LengthOf(1) - half]).Served);
+
+        Assert.Equal((2L, 0L), (s.Streamer.AltitudeReads, s.Streamer.StandInReads));
+    }
+
+    [Fact]
+    public void Night_takes_precedence_over_Dynamic_quality()
+    {
+        var sun = new Daylight();
+        sun.Offer(-20);
+        AltitudeDetail altitude = HalfSizeHigh();
+        Setup s = Streaming(nightPause: sun, altitude: altitude);
+        StreamedTexture t = s.Streamer.Get(Texture())!;
+        altitude.Offer(Above(t, 2000));
+        Assert.Equal((t.BaseMip, HeldBack.Night), s.Streamer.Finest(t));
     }
 
     [Fact]
@@ -1017,14 +1124,17 @@ public sealed class StreamingPartsTests : IDisposable
         {
             log.Open("My, package", VirtualPath.Of("textures", "a.dds"), "streamed");
             log.Read(new ReadRecord("My, package", VirtualPath.Of("textures", "a.dds"), 128, 4096, 0, 0, "near", "real", 12, 2500, 6000, 4096));
-            log.Camera(new CameraReport(51.1, 16.9, 300, 420, new Motion(60, 90), false, DateTime.UtcNow));
+            log.Camera(new CameraReport(51.1, 16.9, 300, 420, new Motion(60, 90), false, DateTime.UtcNow), 1200, 25_000_000);
+            log.Camera(new CameraReport(51.1, 16.9, 300, 420, null, false, DateTime.UtcNow)); // no tile source: no download totals
             (reads, camera) = (log.ReadsPath, log.CameraPath);
         }
         string[] lines = File.ReadAllLines(reads);
         Assert.Equal(3, lines.Length);
         Assert.EndsWith(",\"My, package\",read,textures/a.dds,128,4096,0,0,near,real,12,2500,6000,4096,", lines[2], StringComparison.Ordinal);
         Assert.Contains(",\"My, package\",open,textures/a.dds,", lines[1], StringComparison.Ordinal);
-        Assert.EndsWith(",51.100000,16.900000,300.0,420.0,117,90", File.ReadAllLines(camera)[1], StringComparison.Ordinal);
+        string[] cameraLines = File.ReadAllLines(camera);
+        Assert.EndsWith(",51.100000,16.900000,300.0,420.0,117,90,1200,25000000", cameraLines[1], StringComparison.Ordinal);
+        Assert.EndsWith(",51.100000,16.900000,300.0,420.0,,,,", cameraLines[2], StringComparison.Ordinal);
     }
 
     [Fact]
