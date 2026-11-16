@@ -1,5 +1,15 @@
 namespace OrthoStreamXP.Scenery;
 
+/// <summary>Why a read got less detail than X-Plane asked for, by choice: blurry on purpose, not a missing picture.</summary>
+internal enum HeldBack
+{
+    No,
+    /// <summary>Night with the photos skipped: the low-zoom base.</summary>
+    Night,
+    /// <summary>Dynamic quality: no sharper than the step for the camera's height.</summary>
+    Altitude,
+}
+
 /// <summary>
 /// The levels one open handle has been given, so a level X-Plane reads in several pieces is all from the same
 /// version even if better data arrives in between (a BC1 block split between two versions would be garbage).
@@ -15,10 +25,15 @@ internal sealed class ReadCursor
     public long LastEnd { get; set; } = -1;
 
     /// <summary>
-    /// The latest level X-Plane wanted on this handle was kept to the low-zoom base at night: the next pieces of the
-    /// same read are counted with it, as night reads, not as stand-ins.
+    /// The finest level fetched for the texture when X-Plane last wanted a level on this handle, and why (at night,
+    /// or by Dynamic quality): a later piece of a level finer than it is a held-back read, not a stand-in. X-Plane
+    /// interleaves reads on one handle (level 1, then the tail of levels 3 and on, then the rest of level 1), so
+    /// each piece is judged by its own level, not by the read before it.
     /// </summary>
-    public bool KeptToBase { get; set; }
+    public (int Finest, HeldBack Why) Hold { get; set; }
+
+    /// <summary>Why a piece reading from <paramref name="mip"/> on is held back, by <see cref="Hold"/>.</summary>
+    public HeldBack HeldBackAt(int mip) => mip < Hold.Finest ? Hold.Why : HeldBack.No;
 
     public bool TryGet(int mip, out ReadOnlyMemory<byte> bytes, out Served kind)
     {

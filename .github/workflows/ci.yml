@@ -69,3 +69,18 @@ jobs:
 
       - name: Test
         run: dotnet test --solution OrthoStreamXP.slnx -c Release --no-build
+
+      # Fork-only, not for upstream: after the tests pass, publish the app and keep the result as a download, so a
+      # build can be tried on a Windows PC without a local .NET/WinFsp toolchain. This is the portable publish folder
+      # (orthostreamxp.exe, winfsp-msil.dll, orthostreamxp.example.ini), not the Velopack installer.
+      - name: Publish the portable app
+        run: dotnet publish src/OrthoStreamXP/OrthoStreamXP.csproj -c Release -o artifacts/publish
+
+      - name: Upload the portable app
+        uses: actions/upload-artifact@v4
+        with:
+          name: orthostreamxp-portable
+          path: artifacts/publish
+          if-no-files-found: error
+          # A re-run of this job would otherwise fail: v4 refuses a second artifact with the same name in one run.
+          overwrite: true

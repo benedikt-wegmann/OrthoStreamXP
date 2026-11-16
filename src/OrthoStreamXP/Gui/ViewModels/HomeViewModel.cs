@@ -391,12 +391,12 @@ internal sealed class HomeViewModel : ObservableObject, IPage
     {
         SettingsDocument settings = SettingsDocument.Load(SettingsDocument.DefaultPath);
         int? level = settings.GetInt("level-change");
-        QualityPreset? preset = QualityPreset.ForLevel(level ?? 0);
+        QualityPreset? preset = QualityPreset.Current(level ?? 0, settings.GetBool(QualityPreset.DynamicQualityKey) == true);
         QualityTitle = preset?.Name ?? $"Custom (level {level ?? 0})";
         var plan = new TexturePlan(level ?? 0);
         string zooms = $"{plan.SizeFor(16)} px textures from zoom {plan.FetchZoom(16)} in most areas and zoom {plan.FetchZoom(18)} near airports";
-        QualityText = preset is null
-            ? $"{zooms}."
+        QualityText = preset is null ? $"{zooms}."
+            : preset == QualityPreset.Dynamic ? $"Near the ground {zooms}; higher up as Sharp, then Balanced. A new area loads in {preset.FirstVisit}."
             : $"{zooms}, about {preset.MetresPerPixel:0.#} m per pixel. A new area loads in {preset.FirstVisit}.";
 
         if (Mount.Running is { } running)

@@ -146,6 +146,7 @@ internal sealed class MountSession : IDisposable
         });
         NightPainting? nightPainting = s.NightLights ? StartNightLights(s) : null;
         Daylight? nightPause = s.SkipPhotosAtNight ? SkipPhotosAtNight(s, streaming) : null;
+        AltitudeDetail? altitude = s.Dynamic is { } dynamic ? DynamicQuality(s, dynamic, streaming) : null;
 
         foreach (PackagePlan package in s.Packages)
         {
@@ -155,7 +156,7 @@ internal sealed class MountSession : IDisposable
                 Log.Info($"Removed {oldNights} night textures an earlier version kept whole; they are painted again, keeping only what X-Plane reads");
             roots.RenameToCacheNames();
             _mounts.Add(new PackageMount(package, roots, builder, textureOptions, s.TrackAircraft, s.LoadAhead, s.LazyTerrainListing, decals,
-                streaming ? new TextureStreamer(roots, builder!, _view, model, streamingOptions, nightPause) : null, _view, _readLog, _seasons, _usage, _colours, _loads, exposure,
+                streaming ? new TextureStreamer(roots, builder!, _view, model, streamingOptions, nightPause, _readLog, package.Name, altitude) : null, _view, _readLog, _seasons, _usage, _colours, _loads, exposure,
                 nightPainting is null ? null : new NightTextures(package.Cache, s.Textures.SizeFor, nightPainting)));
             Log.Info($"Package {package.Name}: read-only from {package.Source}, cache overlay {package.Cache}, mounted at {package.Mountpoint}");
         }
@@ -168,11 +169,13 @@ internal sealed class MountSession : IDisposable
                 if (mount.LoadAhead is { } prefetcher) onPosition += prefetcher.OnAircraftPosition;
             SeasonClock? seasons = _seasons;
             ReadLog? readLog = _readLog;
+            TileSource? tiles = _tiles;
             _listener = new AircraftPositionListener(targets, s.Position, onPosition,
                 camera =>
                 {
                     _view.Update(camera);
-                    readLog?.Camera(camera);
+                    altitude?.Offer(camera);
+                    readLog?.Camera(camera, tiles?.TilesDownloaded, tiles?.BytesDownloaded);
                 },
                 streaming ? model.UseScreen : null,
                 seasons is null ? null : day => seasons.OfferDate(day, _view.Starting), _daylight);
@@ -321,9 +324,39 @@ internal sealed class MountSession : IDisposable
         return _daylight;
     }
 
-    /// <summary>"Extra (level +1)": the quality in the words of the window.</summary>
+    /// <summary>
+    /// Dynamic quality's steps, or null when it cannot work: the photos are built whole without mip streaming, and
+    /// without the aircraft's position the height is unknown.
+    /// </summary>
+    private static AltitudeDetail? DynamicQuality(MountSettings s, DynamicOptions dynamic, bool streaming)
+    {
+        if (!streaming)
+        {
+            Log.Warning("Dynamic quality needs mip streaming; the photos stream at full detail at every height in this run");
+            return null;
+        }
+        if (!s.TrackAircraft)
+        {
+            Log.Warning("Dynamic quality needs the aircraft's position from X-Plane (track-aircraft); the photos stream at full detail at every height in this run");
+            return null;
+        }
+        IReadOnlyList<DetailTier> tiers = dynamic.TiersBelow(s.Textures);
+        string full = QualityPreset.ForLevel(s.Textures.LevelChange)?.Name ?? "full detail";
+        if (tiers.Count == 0)
+        {
+            Log.Warning($"Dynamic quality: on, but {full} is no sharper than its steps; the photos stream as they are at every height");
+            return null;
+        }
+        Log.Step($"Dynamic quality: on; {full} near the ground, " +
+                 string.Join(", ", tiers.Select(t => $"{t.Name} from {t.AboveFt:N0} ft")) +
+                 $" above the ground (in a descent, the height {AltitudeDetail.Lookahead.TotalMinutes:0} minutes ahead counts)");
+        return new AltitudeDetail(tiers, full);
+    }
+
+    /// <summary>"Extra quality", "Dynamic quality": the quality in the words of the window.</summary>
     private static string QualityName(MountSettings s) =>
-        QualityPreset.ForLevel(s.Textures.LevelChange) is { } preset ? $"{preset.Name} quality" : $"level {s.Textures.LevelChange:+0;-0;0}";
+        s.Dynamic is not null && s.Textures.LevelChange == QualityPreset.Dynamic.Level ? $"{QualityPreset.Dynamic.Name} quality"
+        : QualityPreset.ForLevel(s.Textures.LevelChange) is { } preset ? $"{preset.Name} quality" : $"level {s.Textures.LevelChange:+0;-0;0}";
 
     /// <summary>Keeps the cache within --cache-limit, removing the areas flown longest ago.</summary>
     private void TrimCache()

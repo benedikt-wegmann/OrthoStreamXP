@@ -48,6 +48,8 @@ internal sealed record MountSettings
     public bool SkipPhotosAtNight { get; init; }
     /// <summary>How far below the horizon, in degrees, the sun must be before the photos are skipped (0-18).</summary>
     public double SkipPhotosSunBelow { get; init; } = -Scenery.Daylight.DefaultDarkBelow;
+    /// <summary>Dynamic quality: the photos' detail follows the height above the ground; null when it is off.</summary>
+    public Scenery.DynamicOptions? Dynamic { get; init; }
     /// <summary>A texture-quality value from an older settings file: no longer used, noted in the log.</summary>
     public string? IgnoredTextureQuality { get; init; }
     /// <summary>Photo textures are served level by level as X-Plane reads them (off: built whole first).</summary>
@@ -153,6 +155,7 @@ internal sealed record MountSettings
         bool skipPhotosAtNight = ParseOnOff(skipValue) ?? throw new SettingsException($"skip-photos-at-night must be on or off, not '{skipValue}'");
         double skipSunBelow = values.Double("skip-photos-sun-below", -Scenery.Daylight.DefaultDarkBelow);
         if (skipSunBelow is < 0 or > 18) throw new SettingsException("skip-photos-sun-below must be between 0 and 18 degrees");
+        Scenery.DynamicOptions? dynamic = ParseDynamic(values);
 
         if (downloadWorkers < 1) throw new SettingsException("download-workers must be at least 1");
         if (downloadTimeout is < 1 or > 120) throw new SettingsException("download-timeout must be between 1 and 120 seconds");
@@ -208,6 +211,7 @@ internal sealed record MountSettings
             NightLights = nightLights,
             SkipPhotosAtNight = skipPhotosAtNight,
             SkipPhotosSunBelow = skipSunBelow,
+            Dynamic = dynamic,
             IgnoredTextureQuality = values.String("texture-quality"),
             MipStreaming = mipStreaming,
             NearWait = nearWait,
@@ -307,6 +311,21 @@ internal sealed record MountSettings
         if (!SeasonModel.Names.TryGetValue(choiceValue, out SeasonChoice choice))
             throw new SettingsException($"season must be one of {string.Join(", ", SeasonModel.Names.Keys)}, not '{choiceValue}'");
         return new SeasonOptions(on, strength / 100, choice);
+    }
+
+    /// <summary>Dynamic quality's steps, or null when it is off.</summary>
+    private static Scenery.DynamicOptions? ParseDynamic(SettingValues values)
+    {
+        string onValue = values.String("dynamic-quality") ?? "off";
+        bool on = ParseOnOff(onValue) ?? throw new SettingsException($"dynamic-quality must be on or off, not '{onValue}'");
+        double sharp = values.Double("dynamic-sharp-above", Scenery.DynamicOptions.DefaultSharpAboveFt);
+        if (sharp is < 1000 or > 40_000) throw new SettingsException("dynamic-sharp-above must be between 1000 and 40000 feet");
+        double? balanced = values.String("dynamic-balanced-above") is { } text && ParseOnOff(text) == false
+            ? null
+            : values.Double("dynamic-balanced-above", Scenery.DynamicOptions.DefaultBalancedAboveFt);
+        if (balanced is < 1000 or > 60_000) throw new SettingsException("dynamic-balanced-above must be between 1000 and 60000 feet, or off");
+        if (balanced <= sharp) throw new SettingsException("dynamic-balanced-above must be higher than dynamic-sharp-above (or off)");
+        return on ? new Scenery.DynamicOptions(sharp, balanced) : null;
     }
 
     internal static bool? ParseOnOff(string value) => value.ToLowerInvariant() switch

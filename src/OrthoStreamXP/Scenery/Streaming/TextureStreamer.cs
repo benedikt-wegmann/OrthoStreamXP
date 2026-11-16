@@ -22,6 +22,11 @@ namespace OrthoStreamXP.Scenery;
 /// while the sun in X-Plane is below <see cref="Daylight.DarkBelow"/> (skip-photos-sun-below): X-Plane's reads and load-ahead alike get the
 /// base, stretched, and what is already cached is served as it is. In twilight the photos stream as usual.
 /// </para>
+/// <para>
+/// With Dynamic quality (<see cref="AltitudeDetail"/>) the same holds by height: high up, nothing finer than the
+/// step's texture size is fetched (level 1 of a 4096 px texture at Sharp), and finer reads are stretched from it.
+/// Night takes precedence (<see cref="Finest"/>).
+/// </para>
 /// </summary>
 internal sealed class TextureStreamer : IDisposable
 {
@@ -48,15 +53,26 @@ internal sealed class TextureStreamer : IDisposable
     private readonly ReadWaitStats _waitStats = new();
     /// <summary>X-Plane's sun when the photos are skipped at night; null streams them whatever the time.</summary>
     private readonly Daylight? _nightPause;
+    /// <summary>Where each build and what it downloaded is recorded; null records nothing.</summary>
+    private readonly ReadLog? _readLog;
+    private readonly string _package;
+    /// <summary>Dynamic quality: the detail follows the camera's height; null streams the chosen quality at every height.</summary>
+    private readonly AltitudeDetail? _altitude;
     private long _ramBytes;
     private int _trimming;
-    private long _reads, _real, _standIn, _flat, _headerChunks, _readBuilds, _aheadBuilds, _fullBuilds, _failedBuilds, _nightReads;
+    private long _reads, _real, _standIn, _flat, _headerChunks, _readBuilds, _aheadBuilds, _fullBuilds, _failedBuilds, _nightReads, _altitudeReads;
 
     /// <param name="nightPause">X-Plane's sun, to skip the photos at night (only the low-zoom base); null streams them always.</param>
+    /// <param name="readLog">Records every build with what it downloaded (builds-*.csv); null records nothing.</param>
+    /// <param name="package">The package's name in that log.</param>
+    /// <param name="altitude">Dynamic quality: holds the detail to the step for the camera's height; null never does.</param>
     public TextureStreamer(SceneryRoots roots, TextureBuilder builder, ViewTracker view, PagingModel model, StreamingOptions options,
-        Daylight? nightPause = null)
+        Daylight? nightPause = null, ReadLog? readLog = null, string package = "", AltitudeDetail? altitude = null)
     {
         _nightPause = nightPause;
+        _readLog = readLog;
+        _package = package;
+        _altitude = altitude;
         _roots = roots;
         _builder = builder;
         _view = view;
@@ -92,6 +108,20 @@ internal sealed class TextureStreamer : IDisposable
 
     /// <summary>Night in X-Plane with the photos skipped at night: nothing finer than the low-zoom base is fetched now.</summary>
     public bool PhotosPaused => _nightPause?.Dark == true;
+
+    /// <summary>
+    /// The finest level fetched for the texture now, and why when that holds X-Plane back: the low-zoom base at night
+    /// with the photos skipped; with Dynamic quality the first level no larger than the step's texture size (Sharp's
+    /// 2048 px is level 1 of a 4096 px texture); otherwise level 0.
+    /// </summary>
+    internal (int Mip, HeldBack Why) Finest(StreamedTexture t)
+    {
+        if (PhotosPaused) return (t.BaseMip, HeldBack.Night);
+        if (_altitude?.Tier is not { } tier) return (0, HeldBack.No);
+        int size = tier.Plan.SizeFor(t.Name.Zoom), mip = 0;
+        while (mip < t.BaseMip && t.Layout.SizeOf(mip) > size) mip++;
+        return (mip, mip == 0 ? HeldBack.No : HeldBack.Altitude);
+    }
 
     /// <summary>Reads of texture data answered (not counting header-only reads).</summary>
     public long Reads => Interlocked.Read(ref _reads);
@@ -168,7 +198,7 @@ internal sealed class TextureStreamer : IDisposable
         Band? band = null;
         double? distance = null;
         double waitedMs = 0;
-        bool keptToBase = false;
+        HeldBack heldBack = HeldBack.No;
         if (wanted is int mip)
         {
             // Full detail wanted: the texture is next to the aircraft, which places it before X-Plane sends a position.
@@ -185,9 +215,12 @@ internal sealed class TextureStreamer : IDisposable
                 Probe(t);
                 realFrom = t.RealFrom;
             }
-            // At night with the photos skipped, the low-zoom base is the finest level fetched: finer ones are stretched from it.
-            keptToBase = cursor.KeptToBase = mip < t.BaseMip && PhotosPaused;
-            int target = keptToBase ? t.BaseMip : mip;
+            // At night with the photos skipped (the low-zoom base) or with Dynamic quality high up, a finer level than
+            // X-Plane wants is the finest fetched: the levels it reads above it are stretched from it.
+            var (finest, why) = Finest(t);
+            cursor.Hold = (finest, why);
+            heldBack = cursor.HeldBackAt(mip);
+            int target = Math.Max(mip, finest);
             if (target < realFrom)
             {
                 Task<bool> build = StartBuild(t, Math.Min(target, t.BaseMip), band switch
@@ -210,14 +243,14 @@ internal sealed class TextureStreamer : IDisposable
                     bool done = build.Wait(TimeSpan.FromSeconds(wait));
                     TimeSpan waited = Stopwatch.GetElapsedTime(waitStarted);
                     waitedMs = waited.TotalMilliseconds;
-                    // A wait for the base at night says nothing about how long the photos take: the tuning never sees it.
-                    if (!keptToBase) NoteWait(band!.Value, starting, waitStarted, waited, done, build);
+                    // A wait for a held-back level says nothing about how long the photos take: the tuning never sees it.
+                    if (heldBack == HeldBack.No) NoteWait(band!.Value, starting, waitStarted, waited, done, build);
                 }
             }
         }
 
-        // The next piece of a read kept to the base at night is counted with it.
-        else if (!headerChunk) keptToBase = cursor.KeptToBase;
+        // A later piece is held back when its own level is finer than the hold of the latest level wanted on the handle.
+        else if (!headerChunk) heldBack = cursor.HeldBackAt(counted);
 
         // A level X-Plane is not reading (the header chunk's start of level 0, or the tail before the level it wants)
         // is filled from the best data at hand; it neither fixes the level's version nor counts in the statistics.
@@ -246,9 +279,10 @@ internal sealed class TextureStreamer : IDisposable
             Interlocked.Increment(ref _headerChunks);
             return new ReadAnswer(output.Length, first, last, Served: any);
         }
-        // A read kept to the base at night is blurry by choice: counted apart, so the Home page's share of real reads,
-        // the flight report and the tuning see only the reads that wanted the photo.
-        if (keptToBase && served != Served.Real) Interlocked.Increment(ref _nightReads);
+        // A held-back read is blurry by choice: counted apart, so the Home page's share of real reads, the flight report
+        // and the tuning see only the reads that wanted the photo.
+        if (heldBack == HeldBack.Night && served != Served.Real) Interlocked.Increment(ref _nightReads);
+        else if (heldBack == HeldBack.Altitude && served != Served.Real) Interlocked.Increment(ref _altitudeReads);
         else
         {
             Interlocked.Increment(ref _reads);
@@ -273,6 +307,9 @@ internal sealed class TextureStreamer : IDisposable
 
     /// <summary>X-Plane's reads at night that got the low-zoom base, stretched, because the photos were skipped.</summary>
     public long NightReads => Interlocked.Read(ref _nightReads);
+
+    /// <summary>X-Plane's reads that got a coarser level, stretched, because Dynamic quality held the detail to the camera's height.</summary>
+    public long AltitudeReads => Interlocked.Read(ref _altitudeReads);
 
     /// <summary>
     /// The band of a read of <paramref name="mip"/>. The level X-Plane asks for is its own verdict on the distance;
@@ -532,6 +569,8 @@ internal sealed class TextureStreamer : IDisposable
     {
         long started = Stopwatch.GetTimestamp();
         bool detailed = k < t.BaseMip;
+        var stats = new TileStats();
+        double? distance = _readLog is not null && _view.Current is { } camera ? ViewTracker.DistanceM(camera, t.Lat, t.Lon) : null;
         try
         {
             long weight = BuildWeight(t.Layout.SizeOf(k)), tiles = BuildTiles(t.Name, t.ZoomFor(k));
@@ -547,7 +586,6 @@ internal sealed class TextureStreamer : IDisposable
                 if (ahead) _ahead.Release(tiles);
                 throw;
             }
-            var stats = new TileStats();
             int zoom = t.ZoomFor(k);
             byte[] chain;
             try
@@ -560,6 +598,7 @@ internal sealed class TextureStreamer : IDisposable
                 if (ahead) _ahead.Release(tiles);
             }
             Save(t, k, chain);
+            LogBuild(t, k, byRead, distance, stats, started, ok: true); // before the level is real: whoever sees it real finds the line
             lock (t.Gate)
             {
                 t.FailedAt = 0;
@@ -583,6 +622,7 @@ internal sealed class TextureStreamer : IDisposable
             Interlocked.Increment(ref _failedBuilds);
             lock (t.Gate) t.FailedAt = Stopwatch.GetTimestamp();
             Log.Warning($"Could not stream {t.Path.Display} levels {k}+ from zoom {t.ZoomFor(k)}: {ex.Message}");
+            LogBuild(t, k, byRead, distance, stats, started, ok: false);
             return false;
         }
         finally
@@ -590,6 +630,11 @@ internal sealed class TextureStreamer : IDisposable
             lock (t.Gate) t.Builds.Remove(k);
         }
     }
+
+    private void LogBuild(StreamedTexture t, int k, bool byRead, double? distance, TileStats stats, long started, bool ok) =>
+        _readLog?.Build(new BuildRecord(_package, t.Path, k, t.Layout.SizeOf(k), t.ZoomFor(k), byRead, distance, t.SizeM,
+            Volatile.Read(ref stats.Misses), Interlocked.Read(ref stats.Bytes), Volatile.Read(ref stats.Hits),
+            Stopwatch.GetElapsedTime(started).TotalSeconds, ok));
 
     /// <summary>Level 0 complete becomes a normal cached DDS; a coarser chain goes to .xpstream\mips; base levels are never saved.</summary>
     private void Save(StreamedTexture t, int k, byte[] chain)
@@ -626,11 +671,13 @@ internal sealed class TextureStreamer : IDisposable
     public Task<bool>? Warm(VirtualPath path, int k, int priority)
     {
         if (Get(path) is not { } t) return null;
-        // At night a texture with its base has all load-ahead may fetch: nothing to ask for (the warmer rechecks every
-        // loaded texture at each position, which would count each of them again and again).
-        if (k < t.BaseMip && PhotosPaused && RealFrom(t) <= t.BaseMip) return Task.FromResult(true);
+        // Held back (at night, or by Dynamic quality), a texture with its finest allowed level has all load-ahead may
+        // fetch: nothing to ask for (the warmer rechecks every loaded texture at each position, which would count each
+        // of them again and again). When the hold lifts, the warmer's next pass asks for the finer levels.
+        int finest = Finest(t).Mip;
+        if (k < finest && RealFrom(t) <= finest) return Task.FromResult(true);
         Interlocked.Increment(ref _warmRequests);
-        return StartBuild(t, Math.Clamp(k, PhotosPaused ? t.BaseMip : 0, t.BaseMip), priority, byRead: false);
+        return StartBuild(t, Math.Clamp(k, finest, t.BaseMip), priority, byRead: false);
     }
 
     private long _warmRequests;
@@ -755,11 +802,13 @@ internal sealed class TextureStreamer : IDisposable
                $"{Interlocked.Read(ref _flat)} flat{Share(Interlocked.Read(ref _flat))}; waited: {_waitStats.Describe(Band.Near)}, {_waitStats.Describe(Band.Middle)}; " +
                $"builds: {Interlocked.Read(ref _readBuilds)} for reads, {Interlocked.Read(ref _aheadBuilds)} ahead ({Interlocked.Read(ref _warmRequests)} asked), " +
                $"{Interlocked.Read(ref _fullBuilds)} at full detail, {Interlocked.Read(ref _failedBuilds)} failed" +
-               (_nightPause is null ? "" : $", {Interlocked.Read(ref _nightReads)} reads at night kept to the low-zoom base") + $"; RAM {Interlocked.Read(ref _ramBytes) >> 20} MB{k}";
+               (_nightPause is null ? "" : $", {Interlocked.Read(ref _nightReads)} reads at night kept to the low-zoom base") +
+               (_altitude is null ? "" : $", {Interlocked.Read(ref _altitudeReads)} reads held to the detail of the height (now {_altitude.Tier?.Name ?? "full detail"})") + $"; RAM {Interlocked.Read(ref _ramBytes) >> 20} MB{k}";
     }
 
     /// <summary>A number that changes whenever the summary would.</summary>
-    public long SummaryVersion => Reads + Interlocked.Read(ref _readBuilds) + Interlocked.Read(ref _aheadBuilds) + Interlocked.Read(ref _failedBuilds);
+    public long SummaryVersion => Reads + Interlocked.Read(ref _readBuilds) + Interlocked.Read(ref _aheadBuilds) + Interlocked.Read(ref _failedBuilds)
+                                  + Interlocked.Read(ref _altitudeReads);
 
     /// <summary>Stops new builds and waits for the running ones.</summary>
     public async Task ShutdownAsync()
